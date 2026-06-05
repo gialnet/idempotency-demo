@@ -36,7 +36,7 @@ class IdempotencyHotPathServiceTest {
 
     @BeforeEach
     void setUp() {
-        when(redis.opsForValue()).thenReturn(valueOps);
+        lenient().when(redis.opsForValue()).thenReturn(valueOps);
     }
 
     @Nested
@@ -129,7 +129,7 @@ class IdempotencyHotPathServiceTest {
         @DisplayName("release is idempotent — does not throw if key absent")
         void releaseIsIdempotent() {
             var key = UUID.randomUUID().toString();
-            when(redis.delete(key)).thenReturn(0L); // key not found
+            when(redis.delete(key)).thenReturn(false); // key not found
             assertThatCode(() -> service.releaseLock(key)).doesNotThrowAnyException();
         }
     }
