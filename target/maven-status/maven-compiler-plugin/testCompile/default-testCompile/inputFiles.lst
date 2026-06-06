@@ -1,0 +1,5 @@
+/Users/antonioperezcaballero/IdeaProjects/idempotency-demo/src/test/java/com/vivaldispring/idempotency/coldpath/IdempotencyColdPathServiceTest.java
+/Users/antonioperezcaballero/IdeaProjects/idempotency-demo/src/test/java/com/vivaldispring/idempotency/coldpath/IdempotencyRecordRepositoryTest.java
+/Users/antonioperezcaballero/IdeaProjects/idempotency-demo/src/test/java/com/vivaldispring/idempotency/hotpath/IdempotencyHotPathServiceTest.java
+/Users/antonioperezcaballero/IdeaProjects/idempotency-demo/src/test/java/com/vivaldispring/idempotency/integration/PaymentIdempotencyIntegrationTest.java
+/Users/antonioperezcaballero/IdeaProjects/idempotency-demo/src/test/java/com/vivaldispring/idempotency/util/ContainersBase.java

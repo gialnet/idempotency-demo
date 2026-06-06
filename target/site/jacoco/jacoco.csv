@@ -1,0 +1,13 @@
+GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
+idempotency-demo,com.vivaldispring.idempotency,IdempotencyApplication,8,0,0,0,3,0,2,0,2,0
+idempotency-demo,com.vivaldispring.idempotency.model,IdempotencyRecord,4,0,0,0,2,0,1,0,1,0
+idempotency-demo,com.vivaldispring.idempotency.model,PaymentResponse,21,0,0,0,1,0,1,0,1,0
+idempotency-demo,com.vivaldispring.idempotency.model,PaymentRequest,12,0,0,0,1,0,1,0,1,0
+idempotency-demo,com.vivaldispring.idempotency.model,IdempotencyStatus,0,21,0,0,0,4,0,1,0,1
+idempotency-demo,com.vivaldispring.idempotency.service,PaymentService,28,0,0,0,9,0,3,0,3,0
+idempotency-demo,com.vivaldispring.idempotency.service,IdempotencyColdPathService,0,82,0,2,0,21,0,9,0,8
+idempotency-demo,com.vivaldispring.idempotency.service,IdempotencyHotPathService,0,64,0,2,0,14,0,6,0,5
+idempotency-demo,com.vivaldispring.idempotency.controller,PaymentController,90,0,2,0,20,0,3,0,2,0
+idempotency-demo,com.vivaldispring.idempotency.exception,GlobalExceptionHandler,18,0,0,0,5,0,2,0,2,0
+idempotency-demo,com.vivaldispring.idempotency.exception,DuplicateInFlightException,0,11,0,0,0,4,0,2,0,2
+idempotency-demo,com.vivaldispring.idempotency.config,RedisConfig,8,0,0,0,2,0,2,0,2,0

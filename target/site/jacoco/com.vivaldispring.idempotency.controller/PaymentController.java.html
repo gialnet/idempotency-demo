@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PaymentController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">idempotency-demo</a> &gt; <a href="index.source.html" class="el_package">com.vivaldispring.idempotency.controller</a> &gt; <span class="el_source">PaymentController.java</span></div><h1>PaymentController.java</h1><pre class="source lang-java linenums">package com.vivaldispring.idempotency.controller;
+
+import com.vivaldispring.idempotency.config.IdempotencyConstants;
+import com.vivaldispring.idempotency.model.IdempotencyRecord;
+import com.vivaldispring.idempotency.model.PaymentRequest;
+import com.vivaldispring.idempotency.model.PaymentResponse;
+import com.vivaldispring.idempotency.service.IdempotencyColdPathService;
+import com.vivaldispring.idempotency.service.IdempotencyHotPathService;
+import com.vivaldispring.idempotency.service.PaymentService;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.Optional;
+
+/**
+ * Entry point for idempotent payment submissions.
+ *
+ * &lt;p&gt;Full check-and-set lifecycle per request:
+ * &lt;ol&gt;
+ *   &lt;li&gt;&lt;b&gt;Hot-path&lt;/b&gt;: acquire Redis lock (SET NX EX 30). Reject concurrent
+ *       duplicates with 409.&lt;/li&gt;
+ *   &lt;li&gt;&lt;b&gt;Cold-path check&lt;/b&gt;: if a COMPLETED record exists in PostgreSQL,
+ *       replay cached response without touching business logic.&lt;/li&gt;
+ *   &lt;li&gt;&lt;b&gt;Execute&lt;/b&gt;: run {@link PaymentService#process}, serialise result.&lt;/li&gt;
+ *   &lt;li&gt;&lt;b&gt;Persist&lt;/b&gt;: mark the cold-path record COMPLETED.&lt;/li&gt;
+ *   &lt;li&gt;&lt;b&gt;Release&lt;/b&gt;: delete the Redis hot-path lock.&lt;/li&gt;
+ * &lt;/ol&gt;
+ */
+<span class="nc" id="L35">@Slf4j</span>
+@RestController
+@RequestMapping(&quot;/payments&quot;)
+@RequiredArgsConstructor
+public class PaymentController {
+
+    private final IdempotencyHotPathService hotPath;
+    private final IdempotencyColdPathService coldPath;
+    private final PaymentService paymentService;
+    private final ObjectMapper objectMapper;
+
+    @PostMapping(
+        consumes = MediaType.APPLICATION_JSON_VALUE,
+        produces = MediaType.APPLICATION_JSON_VALUE
+    )
+    public ResponseEntity&lt;PaymentResponse&gt; createPayment(
+        @RequestHeader(IdempotencyConstants.HEADER) String idempotencyKey,
+        @Valid @RequestBody PaymentRequest request
+    ) throws Exception {
+
+        // ── 1. HOT-PATH: atomic Redis lock ────────────────────────────
+<span class="nc" id="L56">        hotPath.tryAcquireLock(idempotencyKey); // throws DuplicateInFlightException on collision</span>
+
+        try {
+            // ── 2. COLD-PATH: replay if already completed ─────────────
+<span class="nc" id="L60">            Optional&lt;IdempotencyRecord&gt; existing = coldPath.checkCompleted(idempotencyKey);</span>
+<span class="nc bnc" id="L61" title="All 2 branches missed.">            if (existing.isPresent()) {</span>
+<span class="nc" id="L62">                log.info(&quot;Cold-path cache hit for key={}&quot;, idempotencyKey);</span>
+<span class="nc" id="L63">                PaymentResponse cached = objectMapper.readValue(</span>
+<span class="nc" id="L64">                    existing.get().getResponseBody(), PaymentResponse.class</span>
+                );
+<span class="nc" id="L66">                return ResponseEntity</span>
+<span class="nc" id="L67">                    .status(existing.get().getResponseStatus())</span>
+<span class="nc" id="L68">                    .header(&quot;Idempotency-Replayed&quot;, &quot;true&quot;)</span>
+<span class="nc" id="L69">                    .body(cached);</span>
+            }
+
+            // ── 3. EXECUTE business logic ─────────────────────────────
+<span class="nc" id="L73">            coldPath.createProcessingRecord(idempotencyKey);</span>
+<span class="nc" id="L74">            PaymentResponse result = paymentService.process(request);</span>
+
+            // ── 4. PERSIST completed record ───────────────────────────
+<span class="nc" id="L77">            String body = objectMapper.writeValueAsString(result);</span>
+<span class="nc" id="L78">            coldPath.markCompleted(idempotencyKey, HttpStatus.CREATED.value(), body);</span>
+
+<span class="nc" id="L80">            return ResponseEntity.status(HttpStatus.CREATED).body(result);</span>
+
+<span class="nc" id="L82">        } catch (Exception ex) {</span>
+            // On any failure, mark the record as FAILED so client may retry
+<span class="nc" id="L84">            coldPath.markFailed(idempotencyKey);</span>
+<span class="nc" id="L85">            throw ex;</span>
+        } finally {
+            // ── 5. RELEASE Redis lock ─────────────────────────────────
+<span class="nc" id="L88">            hotPath.releaseLock(idempotencyKey);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IdempotencyHotPathService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">idempotency-demo</a> &gt; <a href="index.source.html" class="el_package">com.vivaldispring.idempotency.service</a> &gt; <span class="el_source">IdempotencyHotPathService.java</span></div><h1>IdempotencyHotPathService.java</h1><pre class="source lang-java linenums">package com.vivaldispring.idempotency.service;
+
+import com.vivaldispring.idempotency.config.IdempotencyConstants;
+import com.vivaldispring.idempotency.exception.DuplicateInFlightException;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.stereotype.Service;
+
+import java.time.Duration;
+
+/**
+ * Hot-path: atomic Redis SET NX EX to prevent concurrent duplicates.
+ *
+ * &lt;p&gt;Contract:
+ * &lt;ul&gt;
+ *   &lt;li&gt;{@link #tryAcquireLock} → returns {@code true} if the lock was acquired
+ *       (first request), throws {@link DuplicateInFlightException} if another
+ *       thread/node already holds it.&lt;/li&gt;
+ *   &lt;li&gt;{@link #releaseLock} → removes the lock key after business logic
+ *       completes (success OR failure). The cold-path record in PostgreSQL
+ *       then owns deduplication going forward.&lt;/li&gt;
+ * &lt;/ul&gt;
+ */
+<span class="fc" id="L25">@Slf4j</span>
+@Service
+@RequiredArgsConstructor
+public class IdempotencyHotPathService {
+
+    private final StringRedisTemplate redis;
+
+    /**
+     * Attempts an atomic SET key IN_FLIGHT NX EX 30.
+     *
+     * @return {@code true} if the lock was newly acquired
+     * @throws DuplicateInFlightException if the key already exists (in-flight duplicate)
+     */
+    public boolean tryAcquireLock(String idempotencyKey) {
+<span class="fc" id="L39">        Boolean acquired = redis.opsForValue().setIfAbsent(</span>
+            idempotencyKey,
+            IdempotencyConstants.IN_FLIGHT_VALUE,
+<span class="fc" id="L42">            Duration.ofSeconds(IdempotencyConstants.LOCK_TTL_SECONDS)</span>
+        );
+
+<span class="fc bfc" id="L45" title="All 2 branches covered.">        if (Boolean.TRUE.equals(acquired)) {</span>
+<span class="fc" id="L46">            log.debug(&quot;Hot-path lock acquired for key={}&quot;, idempotencyKey);</span>
+<span class="fc" id="L47">            return true;</span>
+        }
+
+<span class="fc" id="L50">        String currentValue = redis.opsForValue().get(idempotencyKey);</span>
+<span class="fc" id="L51">        log.warn(&quot;Hot-path duplicate detected key={} currentValue={}&quot;, idempotencyKey, currentValue);</span>
+<span class="fc" id="L52">        throw new DuplicateInFlightException(idempotencyKey);</span>
+    }
+
+    /**
+     * Releases the Redis lock.  Safe to call even if the key no longer exists.
+     */
+    public void releaseLock(String idempotencyKey) {
+<span class="fc" id="L59">        redis.delete(idempotencyKey);</span>
+<span class="fc" id="L60">        log.debug(&quot;Hot-path lock released for key={}&quot;, idempotencyKey);</span>
+<span class="fc" id="L61">    }</span>
+
+    /**
+     * Returns {@code true} if the key currently exists in Redis (still in-flight).
+     * Used in tests to assert lock state.
+     */
+    public boolean isLocked(String idempotencyKey) {
+<span class="fc" id="L68">        return Boolean.TRUE.equals(redis.hasKey(idempotencyKey));</span>
+    }
+
+    /**
+     * Returns the raw value stored for the key (IN_FLIGHT or null).
+     */
+    public String getLockValue(String idempotencyKey) {
+<span class="fc" id="L75">        return redis.opsForValue().get(idempotencyKey);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>

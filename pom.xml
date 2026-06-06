@@ -11,7 +11,7 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.example</groupId>
+    <groupId>com.vivaldi-spring</groupId>
     <artifactId>idempotency-demo</artifactId>
     <version>1.0.0-SNAPSHOT</version>
     <description>Spring Boot 3.5 — Idempotency Check-and-Set (Redis hot-path + PostgreSQL cold-path)</description>

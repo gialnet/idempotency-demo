@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="es"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>IdempotencyColdPathService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">idempotency-demo</a> &gt; <a href="index.source.html" class="el_package">com.vivaldispring.idempotency.service</a> &gt; <span class="el_source">IdempotencyColdPathService.java</span></div><h1>IdempotencyColdPathService.java</h1><pre class="source lang-java linenums">package com.vivaldispring.idempotency.service;
+
+import com.vivaldispring.idempotency.model.IdempotencyRecord;
+import com.vivaldispring.idempotency.model.IdempotencyStatus;
+import com.vivaldispring.idempotency.repository.IdempotencyRecordRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.Optional;
+
+/**
+ * Cold-path: durable idempotency store in PostgreSQL.
+ *
+ * &lt;p&gt;Lifecycle:
+ * &lt;ol&gt;
+ *   &lt;li&gt;Before executing business logic, call {@link #checkCompleted} — if a
+ *       COMPLETED record exists, return the cached payload immediately.&lt;/li&gt;
+ *   &lt;li&gt;If not completed, call {@link #markCompleted} (or {@link #markFailed})
+ *       after the business transaction finishes.&lt;/li&gt;
+ * &lt;/ol&gt;
+ */
+<span class="fc" id="L25">@Slf4j</span>
+@Service
+@RequiredArgsConstructor
+public class IdempotencyColdPathService {
+
+    private final IdempotencyRecordRepository repository;
+
+    /**
+     * Checks whether a COMPLETED record already exists for this key.
+     *
+     * @return the cached record if found, empty otherwise
+     */
+    @Transactional(readOnly = true)
+    public Optional&lt;IdempotencyRecord&gt; checkCompleted(String idempotencyKey) {
+<span class="fc" id="L39">        return repository.findByIdempotencyKey(idempotencyKey)</span>
+<span class="fc bfc" id="L40" title="All 2 branches covered.">            .filter(r -&gt; r.getStatus() == IdempotencyStatus.COMPLETED);</span>
+    }
+
+    /**
+     * Persists a PROCESSING record as the request begins execution.
+     * Idempotent: if a record already exists, the existing one is returned.
+     */
+    @Transactional
+    public IdempotencyRecord createProcessingRecord(String idempotencyKey) {
+<span class="fc" id="L49">        return repository.findByIdempotencyKey(idempotencyKey)</span>
+<span class="fc" id="L50">            .orElseGet(() -&gt; {</span>
+<span class="fc" id="L51">                var record = IdempotencyRecord.builder()</span>
+<span class="fc" id="L52">                    .idempotencyKey(idempotencyKey)</span>
+<span class="fc" id="L53">                    .status(IdempotencyStatus.PROCESSING)</span>
+<span class="fc" id="L54">                    .responseStatus(0)</span>
+<span class="fc" id="L55">                    .build();</span>
+<span class="fc" id="L56">                return repository.save(record);</span>
+            });
+    }
+
+    /**
+     * Transitions the record to COMPLETED and stores the serialised response payload.
+     */
+    @Transactional
+    public void markCompleted(String idempotencyKey, int httpStatus, String responseBody) {
+<span class="fc" id="L65">        int updated = repository.markCompleted(</span>
+            idempotencyKey,
+            IdempotencyStatus.COMPLETED,
+            responseBody,
+            httpStatus,
+<span class="fc" id="L70">            Instant.now()</span>
+        );
+<span class="fc" id="L72">        log.info(&quot;Cold-path record marked COMPLETED key={} rows={}&quot;, idempotencyKey, updated);</span>
+<span class="fc" id="L73">    }</span>
+
+    /**
+     * Transitions the record to FAILED (request may be retried by the client).
+     */
+    @Transactional
+    public void markFailed(String idempotencyKey) {
+<span class="fc" id="L80">        repository.findByIdempotencyKey(idempotencyKey).ifPresent(r -&gt; {</span>
+<span class="fc" id="L81">            r.setStatus(IdempotencyStatus.FAILED);</span>
+<span class="fc" id="L82">            repository.save(r);</span>
+<span class="fc" id="L83">            log.warn(&quot;Cold-path record marked FAILED key={}&quot;, idempotencyKey);</span>
+<span class="fc" id="L84">        });</span>
+<span class="fc" id="L85">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.12.202403310830</span></div></body></html>
