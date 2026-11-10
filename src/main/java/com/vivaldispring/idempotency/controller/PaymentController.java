@@ -7,7 +7,7 @@ import com.vivaldispring.idempotency.model.PaymentResponse;
 import com.vivaldispring.idempotency.service.IdempotencyColdPathService;
 import com.vivaldispring.idempotency.service.IdempotencyHotPathService;
 import com.vivaldispring.idempotency.service.PaymentService;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

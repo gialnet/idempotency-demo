@@ -61,7 +61,7 @@ class IdempotencyHotPathServiceTest {
         @DisplayName("throws DuplicateInFlightException when key already exists (concurrent duplicate)")
         void throwsDuplicate_whenKeyAlreadyExists() {
             var key = UUID.randomUUID().toString();
-            when(valueOps.setIfAbsent(any(), any(), any())).thenReturn(false);
+            when(valueOps.setIfAbsent(anyString(), anyString(), any(Duration.class))).thenReturn(false);
             when(valueOps.get(key)).thenReturn(IdempotencyConstants.IN_FLIGHT_VALUE);
 
             assertThatThrownBy(() -> service.tryAcquireLock(key))
@@ -75,7 +75,7 @@ class IdempotencyHotPathServiceTest {
         @DisplayName("uses 30-second TTL as defined in constants")
         void usesTtlFromConstants() {
             var key = UUID.randomUUID().toString();
-            when(valueOps.setIfAbsent(any(), any(), any())).thenReturn(true);
+            when(valueOps.setIfAbsent(anyString(), anyString(), any(Duration.class))).thenReturn(true);
 
             service.tryAcquireLock(key);
 
@@ -89,14 +89,14 @@ class IdempotencyHotPathServiceTest {
         @DisplayName("stores IN_FLIGHT_VALUE as the lock value")
         void storesInFlightValue() {
             var key = UUID.randomUUID().toString();
-            when(valueOps.setIfAbsent(any(), any(), any())).thenReturn(true);
+            when(valueOps.setIfAbsent(anyString(), anyString(), any(Duration.class))).thenReturn(true);
 
             service.tryAcquireLock(key);
 
             verify(valueOps).setIfAbsent(
                 eq(key),
                 eq(IdempotencyConstants.IN_FLIGHT_VALUE),
-                any()
+                any(Duration.class)
             );
         }
 
@@ -104,7 +104,7 @@ class IdempotencyHotPathServiceTest {
         @DisplayName("treats null return from Redis setIfAbsent as lock failure")
         void treatsNullReturnAsFailure() {
             var key = UUID.randomUUID().toString();
-            when(valueOps.setIfAbsent(any(), any(), any())).thenReturn(null);
+            when(valueOps.setIfAbsent(anyString(), anyString(), any(Duration.class))).thenReturn(null);
             when(valueOps.get(key)).thenReturn(null);
 
             // null is treated as Boolean.FALSE by the service

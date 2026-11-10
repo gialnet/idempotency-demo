@@ -3,8 +3,8 @@ package com.vivaldispring.idempotency.util;
 import com.redis.testcontainers.RedisContainer;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
 /**
@@ -16,8 +16,8 @@ import org.testcontainers.utility.DockerImageName;
 public abstract class ContainersBase {
 
     @Container
-    protected static final PostgreSQLContainer<?> POSTGRES =
-        new PostgreSQLContainer<>(DockerImageName.parse("postgres:16-alpine"))
+    protected static final PostgreSQLContainer POSTGRES =
+        new PostgreSQLContainer(DockerImageName.parse("postgres:16-alpine"))
             .withDatabaseName("idempotency_test")
             .withUsername("test")
             .withPassword("test");

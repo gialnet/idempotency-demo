@@ -3,9 +3,9 @@ spring:
     name: idempotency-demo
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/idempotency
-    username: postgres
-    password: postgres
+    url: jdbc:postgresql://192.168.1.10:5432/idempotency
+    username: idempotency_user
+    password: eMPO1fdynXcZTU2K4L4aQL46
     hikari:
       maximum-pool-size: 10
       connection-timeout: 30000

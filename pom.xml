@@ -7,14 +7,14 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.14</version>
+        <version>4.1.2</version>
         <relativePath/>
     </parent>
 
     <groupId>com.vivaldi-spring</groupId>
     <artifactId>idempotency-demo</artifactId>
     <version>1.0.0-SNAPSHOT</version>
-    <description>Spring Boot 3.5 — Idempotency Check-and-Set (Redis hot-path + PostgreSQL cold-path)</description>
+    <description>Spring Boot 4.1 — Idempotency Check-and-Set (Redis hot-path + PostgreSQL cold-path)</description>
 
     <properties>
         <java.version>21</java.version>
@@ -59,25 +59,36 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- Source: https://mvnrepository.com/artifact/org.testcontainers/junit-jupiter -->
+        <!-- Spring Boot 4 modular test starters -->
         <dependency>
-            <groupId>org.testcontainers</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <version>1.21.4</version>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webmvc-test</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- Source: https://mvnrepository.com/artifact/org.testcontainers/postgresql -->
         <dependency>
-            <groupId>org.testcontainers</groupId>
-            <artifactId>postgresql</artifactId>
-            <version>1.21.4</version>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa-test</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- Source: https://mvnrepository.com/artifact/com.redis/testcontainers-redis -->
+        <!-- Testcontainers 2.0 - JUnit Jupiter -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-junit-jupiter</artifactId>
+            <version>${testcontainers.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- Testcontainers 2.0 - PostgreSQL -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-postgresql</artifactId>
+            <version>${testcontainers.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- Testcontainers Redis 3.0 (compatible with Testcontainers 2.0 + Spring Boot 4.1) -->
         <dependency>
             <groupId>com.redis</groupId>
             <artifactId>testcontainers-redis</artifactId>
-            <version>2.2.4</version>
+            <version>3.0.1</version>
             <scope>test</scope>
         </dependency>
         <dependency>
