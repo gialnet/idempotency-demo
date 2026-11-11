@@ -459,10 +459,6 @@ curl -i -X POST localhost:8080/payments \
     <section id="notes">
       <h2>11. Notes and possible improvements</h2>
       <p>Issues found while reviewing the code, useful if the project grows beyond a demo:</p>
-      <div class="callout warn">
-        <strong>Flyway dependency missing</strong>
-        The <code>pom.xml</code> does not include <code>spring-boot-starter-flyway</code> (nor <code>flyway-core</code> / <code>flyway-database-postgresql</code>). In Spring Boot 4, Flyway auto-configuration is a separate module, so the <code>spring.flyway.*</code> properties have no effect and the table must already exist for <code>ddl-auto: validate</code> to pass.
-      </div>
       <ul>
         <li><strong>Lock expiry during processing.</strong> If <code>PaymentService</code> takes longer than 30 s, the lock expires and another request with the same key could run in parallel (it would find a <code>PROCESSING</code> record, which does not block). <code>PROCESSING</code> could be treated as 409 in the cold-path, or the TTL could be renewed.</li>
         <li><strong>Lock released without checking ownership.</strong> <code>releaseLock</code> runs <code>DEL</code> without verifying the lock still belongs to it; after an expiry it could delete another request's lock. The usual approach is to store a unique token and delete with a <em>compare-and-delete</em> Lua script.</li>

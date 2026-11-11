@@ -16,7 +16,7 @@ public interface IdempotencyRecordRepository extends JpaRepository<IdempotencyRe
 
     boolean existsByIdempotencyKeyAndStatus(String key, IdempotencyStatus status);
 
-    @Modifying
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("""
         UPDATE IdempotencyRecord r
            SET r.status       = :status,
