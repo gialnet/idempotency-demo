@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Idempotency Demo — Documentación</title>
+<style>
+  :root {
+    --bg: #fbfaf7; --surface: #ffffff; --surface-2: #f3f1ec; --text: #1d1d1b; --muted: #5f5d57;
+    --border: #e2dfd7; --accent: #2d5bd7; --accent-soft: #e6ecfb;
+    --redis: #c8372d; --redis-soft: #fbe9e7; --pg: #2f6690; --pg-soft: #e5eff7;
+    --ok: #2f7d4f; --ok-soft: #e4f3ea; --warn: #9a6400; --warn-soft: #fbf1dc;
+    --code-bg: #f5f3ee;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161614; --surface: #1e1e1b; --surface-2: #26261f; --text: #ecebe6; --muted: #a8a69e;
+      --border: #34332d; --accent: #8aa8ff; --accent-soft: #232c45;
+      --redis: #ff8a7d; --redis-soft: #3a2220; --pg: #7fb6e0; --pg-soft: #1d2c38;
+      --ok: #7fd3a0; --ok-soft: #1b3226; --warn: #f0c060; --warn-soft: #3a2e14;
+      --code-bg: #23231f;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #161614; --surface: #1e1e1b; --surface-2: #26261f; --text: #ecebe6; --muted: #a8a69e;
+    --border: #34332d; --accent: #8aa8ff; --accent-soft: #232c45;
+    --redis: #ff8a7d; --redis-soft: #3a2220; --pg: #7fb6e0; --pg-soft: #1d2c38;
+    --ok: #7fd3a0; --ok-soft: #1b3226; --warn: #f0c060; --warn-soft: #3a2e14;
+    --code-bg: #23231f;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  }
+  code, pre { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; }
+  :not(pre) > code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 4px; border: 1px solid var(--border); }
+  pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; overflow-x: auto; line-height: 1.5; }
+  a { color: var(--accent); }
+  .layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); max-width: 1180px; margin: 0 auto; }
+  nav.toc {
+    position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+    padding: 32px 20px; border-right: 1px solid var(--border); font-size: 14px;
+  }
+  nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 18px; }
+  nav.toc ol { list-style: none; padding: 0; margin: 0; counter-reset: s; }
+  nav.toc li { margin: 2px 0; }
+  nav.toc a { display: block; padding: 4px 8px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+  nav.toc a:hover { background: var(--surface-2); color: var(--text); }
+  main { padding: 40px 48px 96px; min-width: 0; }
+  header.hero { margin-bottom: 40px; }
+  header.hero h1 { font-size: 34px; line-height: 1.2; margin: 0 0 10px; letter-spacing: -0.01em; }
+  header.hero p.lead { font-size: 18px; color: var(--muted); margin: 0 0 18px; max-width: 70ch; }
+  .tags { display: flex; flex-wrap: wrap; gap: 8px; }
+  .tag { font-size: 12.5px; padding: 3px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); color: var(--muted); }
+  section { margin-top: 56px; }
+  h2 { font-size: 24px; margin: 0 0 14px; padding-top: 8px; letter-spacing: -0.01em; }
+  h3 { font-size: 18px; margin: 28px 0 8px; }
+  p, li { max-width: 78ch; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card.redis { border-left: 4px solid var(--redis); }
+  .card.pg { border-left: 4px solid var(--pg); }
+  .card h3 { margin-top: 0; }
+  .callout { border-radius: 8px; padding: 12px 16px; margin: 16px 0; border: 1px solid var(--border); }
+  .callout.info { background: var(--accent-soft); }
+  .callout.warn { background: var(--warn-soft); }
+  .callout strong:first-child { display: block; margin-bottom: 2px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; margin: 12px 0; }
+  .table-wrap { overflow-x: auto; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--surface-2); font-weight: 600; }
+  .badge { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 4px; font-family: ui-monospace, Menlo, monospace; }
+  .b-201 { background: var(--ok-soft); color: var(--ok); }
+  .b-409 { background: var(--redis-soft); color: var(--redis); }
+  .b-400 { background: var(--warn-soft); color: var(--warn); }
+  .file { font-family: ui-monospace, Menlo, monospace; font-size: 13px; color: var(--muted); }
+  .tree { font-size: 13.5px; }
+  .steps { counter-reset: st; list-style: none; padding: 0; }
+  .steps li { counter-increment: st; position: relative; padding-left: 40px; margin: 12px 0; }
+  .steps li::before {
+    content: counter(st); position: absolute; left: 0; top: 0; width: 26px; height: 26px; border-radius: 50%;
+    background: var(--accent); color: var(--bg); font-weight: 700; font-size: 13px; display: grid; place-items: center;
+  }
+  figure { margin: 20px 0; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { font-size: 13.5px; color: var(--muted); margin-top: 8px; }
+  .diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px; overflow-x: auto; }
+  .diagram svg { min-width: 640px; }
+  svg text { fill: var(--text); font-family: -apple-system, "Segoe UI", sans-serif; }
+  svg .muted { fill: var(--muted); }
+  svg .line { stroke: var(--border); }
+  svg .arrow { stroke: var(--text); fill: none; stroke-width: 1.4; }
+  svg .arrow-dash { stroke: var(--muted); fill: none; stroke-width: 1.2; stroke-dasharray: 5 4; }
+  svg .box { fill: var(--surface-2); stroke: var(--border); }
+  svg .box-redis { fill: var(--redis-soft); stroke: var(--redis); }
+  svg .box-pg { fill: var(--pg-soft); stroke: var(--pg); }
+  svg .box-ok { fill: var(--ok-soft); stroke: var(--ok); }
+  svg .box-warn { fill: var(--warn-soft); stroke: var(--warn); }
+  svg .box-acc { fill: var(--accent-soft); stroke: var(--accent); }
+  svg .head { fill: var(--text); }
+  footer { margin-top: 72px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--border); padding-top: 16px; }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    nav.toc { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); padding: 16px; }
+    nav.toc ol { display: flex; flex-wrap: wrap; gap: 4px; }
+    main { padding: 28px 16px 64px; }
+    .grid2 { grid-template-columns: 1fr; }
+    header.hero h1 { font-size: 27px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav class="toc" aria-label="Contenido">
+    <div class="brand">idempotency-demo</div>
+    <ol>
+      <li><a href="#resumen">1. Resumen</a></li>
+      <li><a href="#arquitectura">2. Arquitectura</a></li>
+      <li><a href="#flujo">3. Flujo de una petición</a></li>
+      <li><a href="#estructura">4. Estructura del proyecto</a></li>
+      <li><a href="#componentes">5. Componentes</a></li>
+      <li><a href="#datos">6. Modelo de datos</a></li>
+      <li><a href="#api">7. API HTTP</a></li>
+      <li><a href="#config">8. Configuración</a></li>
+      <li><a href="#tests">9. Tests</a></li>
+      <li><a href="#ejecutar">10. Ejecutar</a></li>
+      <li><a href="#observaciones">11. Observaciones</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="hero">
+      <h1>Idempotency Demo</h1>
+      <p class="lead">Una API de pagos en Spring Boot 4.1 que garantiza que una misma operación no se ejecuta dos veces, combinando un <strong>lock en Redis</strong> (hot-path) con un <strong>registro persistente en PostgreSQL</strong> (cold-path).</p>
+      <div class="tags">
+        <span class="tag">Java 21</span><span class="tag">Spring Boot 4.1.2</span><span class="tag">Spring Data JPA</span>
+        <span class="tag">Spring Data Redis (Lettuce)</span><span class="tag">PostgreSQL</span><span class="tag">Flyway</span>
+        <span class="tag">Testcontainers 2.0</span><span class="tag">Lombok</span>
+      </div>
+    </header>
+
+    <section id="resumen">
+      <h2>1. Resumen</h2>
+      <p>En sistemas distribuidos un cliente puede reenviar una petición (timeout de red, reintento automático, doble clic). Para operaciones con efectos secundarios, como un cobro, eso produciría <em>dos</em> pagos. El patrón <strong>Idempotency-Key</strong> lo evita: el cliente envía una clave única por operación en la cabecera <code>Idempotency-Key</code>, y el servidor garantiza que:</p>
+      <ul>
+        <li>Si llegan <strong>dos peticiones a la vez</strong> con la misma clave, solo una se procesa; la otra recibe <span class="badge b-409">409 Conflict</span>.</li>
+        <li>Si llega <strong>un reintento después</strong> de que la primera terminó, se devuelve la respuesta original guardada, sin volver a ejecutar la lógica de negocio, con la cabecera <code>Idempotency-Replayed: true</code>.</li>
+      </ul>
+      <p>Esto se implementa con un mecanismo <em>check-and-set</em> de dos niveles, que da nombre a los servicios del proyecto.</p>
+    </section>
+
+    <section id="arquitectura">
+      <h2>2. Arquitectura: hot-path y cold-path</h2>
+      <div class="grid2">
+        <div class="card redis">
+          <h3>Hot-path · Redis</h3>
+          <p>Protege contra <strong>duplicados concurrentes</strong>. Usa el comando atómico <code>SET key IN_FLIGHT NX EX 30</code>: solo el primer hilo/nodo que llega consigue crear la clave. El lock es temporal (TTL de 30 s) y se borra al terminar la petición.</p>
+          <p class="file">IdempotencyHotPathService</p>
+        </div>
+        <div class="card pg">
+          <h3>Cold-path · PostgreSQL</h3>
+          <p>Protege contra <strong>reintentos posteriores</strong>. Guarda de forma duradera el estado de cada clave (<code>PROCESSING</code> → <code>COMPLETED</code> / <code>FAILED</code>) junto con el código HTTP y el cuerpo JSON de la respuesta original, para poder repetirla.</p>
+          <p class="file">IdempotencyColdPathService</p>
+        </div>
+      </div>
+      <div class="callout info">
+        <strong>¿Por qué dos almacenes?</strong>
+        Redis es rápido y su <code>SET NX</code> es atómico, ideal para un lock distribuido de corta vida, pero no es la fuente de verdad duradera. PostgreSQL es duradero y transaccional, ideal para guardar el resultado final, pero sería más lento y complejo usarlo como lock bajo alta concurrencia. Cada uno cubre la debilidad del otro.
+      </div>
+    </section>
+
+    <section id="flujo">
+      <h2>3. Flujo de una petición</h2>
+      <p>Todo el ciclo está orquestado en <code>PaymentController.createPayment()</code>:</p>
+      <ol class="steps">
+        <li><strong>Adquirir lock (hot-path).</strong> <code>hotPath.tryAcquireLock(key)</code>. Si la clave ya existe en Redis, lanza <code>DuplicateInFlightException</code>, que se traduce en <span class="badge b-409">409</span>. Esto ocurre <em>antes</em> del bloque <code>try</code>, así que el lock de otra petición nunca se libera por error.</li>
+        <li><strong>Comprobar si ya se completó (cold-path).</strong> <code>coldPath.checkCompleted(key)</code> busca un registro con estado <code>COMPLETED</code>. Si existe, deserializa el <code>responseBody</code> guardado y lo devuelve con el código original y la cabecera <code>Idempotency-Replayed: true</code>.</li>
+        <li><strong>Ejecutar.</strong> Crea (o reutiliza) un registro <code>PROCESSING</code> y llama a <code>paymentService.process(request)</code>.</li>
+        <li><strong>Persistir.</strong> Serializa la respuesta a JSON y llama a <code>coldPath.markCompleted(key, 201, body)</code>. Devuelve <span class="badge b-201">201 Created</span>.</li>
+        <li><strong>Liberar lock.</strong> En el <code>finally</code>, <code>hotPath.releaseLock(key)</code> borra la clave de Redis, tanto si hubo éxito como error. Si hubo una excepción, antes se marca el registro como <code>FAILED</code> para que el cliente pueda reintentar.</li>
+      </ol>
+
+      <figure class="diagram">
+        <svg viewBox="0 0 860 560" role="img" aria-label="Diagrama de secuencia del flujo de una petición">
+          <defs>
+            <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" class="head"/>
+            </marker>
+          </defs>
+          <!-- participants -->
+          <g font-size="13" font-weight="600" text-anchor="middle">
+            <rect x="20" y="10" width="120" height="36" rx="6" class="box"/><text x="80" y="33">Cliente</text>
+            <rect x="200" y="10" width="140" height="36" rx="6" class="box-acc"/><text x="270" y="33">PaymentController</text>
+            <rect x="400" y="10" width="120" height="36" rx="6" class="box-redis"/><text x="460" y="33">Redis</text>
+            <rect x="570" y="10" width="120" height="36" rx="6" class="box-pg"/><text x="630" y="33">PostgreSQL</text>
+            <rect x="730" y="10" width="120" height="36" rx="6" class="box"/><text x="790" y="33">PaymentService</text>
+          </g>
+          <g class="line" stroke-width="1" stroke-dasharray="3 4">
+            <line x1="80" y1="46" x2="80" y2="550"/><line x1="270" y1="46" x2="270" y2="550"/>
+            <line x1="460" y1="46" x2="460" y2="550"/><line x1="630" y1="46" x2="630" y2="550"/>
+            <line x1="790" y1="46" x2="790" y2="550"/>
+          </g>
+          <g font-size="12">
+            <line x1="80" y1="80" x2="268" y2="80" class="arrow" marker-end="url(#ah)"/>
+            <text x="175" y="72" text-anchor="middle">POST /payments + Idempotency-Key</text>
+
+            <line x1="270" y1="115" x2="458" y2="115" class="arrow" marker-end="url(#ah)"/>
+            <text x="365" y="107" text-anchor="middle">① SET key IN_FLIGHT NX EX 30</text>
+            <line x1="460" y1="140" x2="272" y2="140" class="arrow-dash" marker-end="url(#ah)"/>
+            <text x="365" y="134" text-anchor="middle" class="muted">OK  (o null → 409)</text>
+
+            <line x1="270" y1="180" x2="628" y2="180" class="arrow" marker-end="url(#ah)"/>
+            <text x="450" y="172" text-anchor="middle">② findByIdempotencyKey (¿COMPLETED?)</text>
+            <line x1="630" y1="205" x2="272" y2="205" class="arrow-dash" marker-end="url(#ah)"/>
+            <text x="450" y="199" text-anchor="middle" class="muted">vacío → continuar · COMPLETED → replay</text>
+
+            <line x1="270" y1="245" x2="628" y2="245" class="arrow" marker-end="url(#ah)"/>
+            <text x="450" y="237" text-anchor="middle">③ INSERT status=PROCESSING</text>
+
+            <line x1="270" y1="285" x2="788" y2="285" class="arrow" marker-end="url(#ah)"/>
+            <text x="530" y="277" text-anchor="middle">③ process(request)</text>
+            <line x1="790" y1="310" x2="272" y2="310" class="arrow-dash" marker-end="url(#ah)"/>
+            <text x="530" y="304" text-anchor="middle" class="muted">PaymentResponse (APPROVED)</text>
+
+            <line x1="270" y1="350" x2="628" y2="350" class="arrow" marker-end="url(#ah)"/>
+            <text x="450" y="342" text-anchor="middle">④ UPDATE status=COMPLETED, body, 201</text>
+
+            <line x1="270" y1="390" x2="458" y2="390" class="arrow" marker-end="url(#ah)"/>
+            <text x="365" y="382" text-anchor="middle">⑤ DEL key (finally)</text>
+
+            <line x1="270" y1="430" x2="82" y2="430" class="arrow" marker-end="url(#ah)"/>
+            <text x="175" y="422" text-anchor="middle">201 Created + JSON</text>
+
+            <rect x="20" y="460" width="830" height="80" rx="8" class="box-warn" stroke-dasharray="4 3"/>
+            <text x="36" y="484" font-weight="600">Reintento posterior con la misma clave</text>
+            <text x="36" y="506" class="muted">① lock OK (el anterior ya se liberó) → ② encuentra COMPLETED → devuelve el cuerpo guardado con</text>
+            <text x="36" y="526" class="muted">Idempotency-Replayed: true. PaymentService NO se vuelve a llamar. → ⑤ DEL key</text>
+          </g>
+        </svg>
+        <figcaption>Secuencia de una petición nueva y, abajo, cómo se resuelve un reintento.</figcaption>
+      </figure>
+
+      <h3>Ciclo de vida del registro en PostgreSQL</h3>
+      <figure class="diagram">
+        <svg viewBox="0 0 700 170" role="img" aria-label="Diagrama de estados del registro de idempotencia">
+          <defs>
+            <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" class="head"/>
+            </marker>
+          </defs>
+          <g font-size="13" text-anchor="middle">
+            <circle cx="40" cy="80" r="8" class="head"/>
+            <line x1="50" y1="80" x2="148" y2="80" class="arrow" marker-end="url(#ah2)"/>
+            <text x="99" y="70" font-size="11" class="muted">createProcessingRecord</text>
+
+            <rect x="150" y="58" width="140" height="44" rx="22" class="box-acc"/>
+            <text x="220" y="85" font-weight="600">PROCESSING</text>
+
+            <path d="M290,72 C380,30 420,30 478,40" class="arrow" marker-end="url(#ah2)"/>
+            <text x="385" y="30" font-size="11" class="muted">markCompleted (éxito)</text>
+            <rect x="480" y="20" width="160" height="44" rx="22" class="box-ok"/>
+            <text x="560" y="47" font-weight="600">COMPLETED</text>
+
+            <path d="M290,90 C380,130 420,130 478,120" class="arrow" marker-end="url(#ah2)"/>
+            <text x="385" y="146" font-size="11" class="muted">markFailed (excepción)</text>
+            <rect x="480" y="98" width="160" height="44" rx="22" class="box-redis"/>
+            <text x="560" y="125" font-weight="600">FAILED</text>
+          </g>
+          <g font-size="11" class="muted">
+            <text x="560" y="80" text-anchor="middle" class="muted">→ se repite la respuesta</text>
+            <text x="560" y="160" text-anchor="middle" class="muted">→ el cliente puede reintentar</text>
+          </g>
+        </svg>
+        <figcaption>Solo un registro <code>COMPLETED</code> provoca un replay; <code>PROCESSING</code> y <code>FAILED</code> dejan pasar la petición a la lógica de negocio.</figcaption>
+      </figure>
+    </section>
+
+    <section id="estructura">
+      <h2>4. Estructura del proyecto</h2>
+<pre class="tree">src/main/java/com/vivaldispring/idempotency/
+├── IdempotencyApplication.java          <span style="color:var(--muted)"># Punto de entrada Spring Boot</span>
+├── config/
+│   ├── IdempotencyConstants.java        <span style="color:var(--muted)"># Nombre de cabecera, TTL, valor del lock</span>
+│   └── RedisConfig.java                 <span style="color:var(--muted)"># Bean StringRedisTemplate</span>
+├── controller/
+│   └── PaymentController.java           <span style="color:var(--muted)"># POST /payments — orquesta el flujo</span>
+├── exception/
+│   ├── DuplicateInFlightException.java  <span style="color:var(--muted)"># Lock ya tomado</span>
+│   └── GlobalExceptionHandler.java      <span style="color:var(--muted)"># → 409 ProblemDetail (RFC 9457)</span>
+├── model/
+│   ├── IdempotencyRecord.java           <span style="color:var(--muted)"># Entidad JPA</span>
+│   ├── IdempotencyStatus.java           <span style="color:var(--muted)"># PROCESSING | COMPLETED | FAILED</span>
+│   ├── PaymentRequest.java              <span style="color:var(--muted)"># record con validación</span>
+│   └── PaymentResponse.java             <span style="color:var(--muted)"># record de respuesta</span>
+├── repository/
+│   └── IdempotencyRecordRepository.java <span style="color:var(--muted)"># Spring Data JPA + UPDATE JPQL</span>
+└── service/
+    ├── IdempotencyHotPathService.java   <span style="color:var(--muted)"># Lock Redis</span>
+    ├── IdempotencyColdPathService.java  <span style="color:var(--muted)"># Registro PostgreSQL</span>
+    └── PaymentService.java              <span style="color:var(--muted)"># Lógica de negocio (stub)</span>
+
+src/main/resources/
+├── application.yml
+└── db/migration/V1__create_idempotency_records.sql</pre>
+    </section>
+
+    <section id="componentes">
+      <h2>5. Componentes</h2>
+
+      <h3>PaymentController</h3>
+      <p class="file">controller/PaymentController.java</p>
+      <p>Único endpoint REST: <code>POST /payments</code>. Recibe la cabecera obligatoria <code>Idempotency-Key</code> y un <code>PaymentRequest</code> validado con <code>@Valid</code>. Depende de los dos servicios de idempotencia, de <code>PaymentService</code> y del <code>ObjectMapper</code> de Jackson 3 (<code>tools.jackson.databind</code>, el paquete nuevo en Spring Boot 4) para (de)serializar la respuesta guardada.</p>
+<pre><code>hotPath.tryAcquireLock(idempotencyKey);          // fuera del try: si falla, no se libera nada
+try {
+    var existing = coldPath.checkCompleted(idempotencyKey);
+    if (existing.isPresent()) { /* replay con Idempotency-Replayed: true */ }
+    coldPath.createProcessingRecord(idempotencyKey);
+    PaymentResponse result = paymentService.process(request);
+    coldPath.markCompleted(idempotencyKey, 201, objectMapper.writeValueAsString(result));
+    return ResponseEntity.status(CREATED).body(result);
+} catch (Exception ex) {
+    coldPath.markFailed(idempotencyKey);
+    throw ex;
+} finally {
+    hotPath.releaseLock(idempotencyKey);
+}</code></pre>
+
+      <h3>IdempotencyHotPathService</h3>
+      <p class="file">service/IdempotencyHotPathService.java</p>
+      <div class="table-wrap"><table>
+        <tr><th>Método</th><th>Qué hace</th></tr>
+        <tr><td><code>tryAcquireLock(key)</code></td><td><code>opsForValue().setIfAbsent(key, "IN_FLIGHT", 30s)</code>. Devuelve <code>true</code> si lo consigue; si Redis devuelve <code>false</code> o <code>null</code>, registra un warning y lanza <code>DuplicateInFlightException</code>.</td></tr>
+        <tr><td><code>releaseLock(key)</code></td><td><code>DEL key</code>. Seguro aunque la clave ya no exista.</td></tr>
+        <tr><td><code>isLocked(key)</code></td><td><code>EXISTS key</code>. Pensado para tests.</td></tr>
+        <tr><td><code>getLockValue(key)</code></td><td><code>GET key</code> (devuelve <code>IN_FLIGHT</code> o <code>null</code>). Pensado para tests.</td></tr>
+      </table></div>
+      <p>El TTL de 30 s actúa como red de seguridad: si la instancia se cae a mitad de la petición y nunca llega al <code>finally</code>, el lock expira solo y la clave no queda bloqueada para siempre.</p>
+
+      <h3>IdempotencyColdPathService</h3>
+      <p class="file">service/IdempotencyColdPathService.java</p>
+      <div class="table-wrap"><table>
+        <tr><th>Método</th><th>Transacción</th><th>Qué hace</th></tr>
+        <tr><td><code>checkCompleted(key)</code></td><td>read-only</td><td>Busca por clave y filtra a <code>status == COMPLETED</code>.</td></tr>
+        <tr><td><code>createProcessingRecord(key)</code></td><td>sí</td><td>Si ya hay registro (p. ej. uno <code>FAILED</code> de un intento anterior) lo devuelve; si no, inserta uno nuevo en <code>PROCESSING</code> con <code>responseStatus = 0</code>.</td></tr>
+        <tr><td><code>markCompleted(key, status, body)</code></td><td>sí</td><td>Ejecuta un <code>UPDATE</code> JPQL masivo: estado, cuerpo, código HTTP y <code>completedAt</code>.</td></tr>
+        <tr><td><code>markFailed(key)</code></td><td>sí</td><td>Si existe el registro, lo pasa a <code>FAILED</code>. No-op si no existe.</td></tr>
+      </table></div>
+
+      <h3>PaymentService</h3>
+      <p class="file">service/PaymentService.java</p>
+      <p>Simulación de la lógica de negocio cara y con efectos secundarios (cobro en pasarela, apunte contable…). Devuelve siempre un <code>PaymentResponse</code> con un <code>transactionId</code> UUID aleatorio y estado <code>APPROVED</code>. Que el UUID sea distinto en cada ejecución es justo lo que permite a los tests comprobar que un replay devuelve la <em>misma</em> transacción y no una nueva.</p>
+
+      <h3>IdempotencyRecordRepository</h3>
+      <p class="file">repository/IdempotencyRecordRepository.java</p>
+      <ul>
+        <li><code>findByIdempotencyKey(String)</code> — consulta derivada.</li>
+        <li><code>existsByIdempotencyKeyAndStatus(String, IdempotencyStatus)</code> — consulta derivada (actualmente solo usada en tests).</li>
+        <li><code>markCompleted(...)</code> — <code>@Modifying @Query</code> con un <code>UPDATE</code> JPQL; devuelve el número de filas afectadas.</li>
+      </ul>
+
+      <h3>Excepciones</h3>
+      <p class="file">exception/</p>
+      <p><code>DuplicateInFlightException</code> (<code>RuntimeException</code>) lleva la clave en conflicto. <code>GlobalExceptionHandler</code> (<code>@RestControllerAdvice</code>) la convierte en un <code>ProblemDetail</code> estándar RFC 9457 con estado 409, un <code>type</code> URI y la propiedad extra <code>idempotencyKey</code>.</p>
+
+      <h3>Configuración</h3>
+      <p class="file">config/</p>
+      <p><code>IdempotencyConstants</code> centraliza <code>HEADER = "Idempotency-Key"</code>, <code>LOCK_TTL_SECONDS = 30</code> e <code>IN_FLIGHT_VALUE = "IN_FLIGHT"</code>. <code>RedisConfig</code> declara un <code>StringRedisTemplate</code> sobre la conexión Lettuce autoconfigurada.</p>
+    </section>
+
+    <section id="datos">
+      <h2>6. Modelo de datos</h2>
+      <p>Tabla <code>idempotency_records</code>, creada por la migración Flyway <code>V1__create_idempotency_records.sql</code> y mapeada por la entidad <code>IdempotencyRecord</code>. Hibernate arranca con <code>ddl-auto: validate</code>, así que la entidad debe coincidir con el esquema.</p>
+      <div class="table-wrap"><table>
+        <tr><th>Columna</th><th>Tipo</th><th>Restricciones</th><th>Significado</th></tr>
+        <tr><td><code>id</code></td><td>BIGSERIAL</td><td>PK</td><td>Identificador interno (<code>GenerationType.IDENTITY</code>).</td></tr>
+        <tr><td><code>idempotency_key</code></td><td>VARCHAR(255)</td><td>NOT NULL, UNIQUE</td><td>Clave enviada por el cliente.</td></tr>
+        <tr><td><code>status</code></td><td>VARCHAR(20)</td><td>NOT NULL</td><td><code>PROCESSING</code> / <code>COMPLETED</code> / <code>FAILED</code> (<code>EnumType.STRING</code>).</td></tr>
+        <tr><td><code>response_status</code></td><td>INTEGER</td><td>NOT NULL, default 0</td><td>Código HTTP original (0 mientras no termina).</td></tr>
+        <tr><td><code>response_body</code></td><td>TEXT</td><td></td><td>JSON de la respuesta original.</td></tr>
+        <tr><td><code>created_at</code></td><td>TIMESTAMPTZ</td><td>NOT NULL</td><td>Se rellena en <code>@PrePersist</code>.</td></tr>
+        <tr><td><code>completed_at</code></td><td>TIMESTAMPTZ</td><td></td><td>Se rellena al completar.</td></tr>
+      </table></div>
+      <p>La restricción <code>UNIQUE</code> sobre <code>idempotency_key</code> es la última línea de defensa: aunque fallara el lock de Redis, la base de datos no permitiría dos registros con la misma clave.</p>
+    </section>
+
+    <section id="api">
+      <h2>7. API HTTP</h2>
+      <h3><code>POST /payments</code></h3>
+<pre><code>POST /payments HTTP/1.1
+Content-Type: application/json
+Idempotency-Key: 6f1c9e2a-0b7d-4c55-9a1e-3f2d8b7c4e10
+
+{ "accountId": "ACC-001", "amount": 99.95, "currency": "EUR" }</code></pre>
+      <p>Validaciones del cuerpo (<code>PaymentRequest</code>): <code>accountId</code> y <code>currency</code> <code>@NotBlank</code>; <code>amount</code> <code>@Positive</code>.</p>
+      <div class="table-wrap"><table>
+        <tr><th>Respuesta</th><th>Cuándo</th></tr>
+        <tr><td><span class="badge b-201">201</span></td><td>Primera ejecución correcta. Cuerpo <code>PaymentResponse</code>.</td></tr>
+        <tr><td><span class="badge b-201">201</span> + <code>Idempotency-Replayed: true</code></td><td>Reintento de una clave ya <code>COMPLETED</code>: mismo cuerpo que la primera vez.</td></tr>
+        <tr><td><span class="badge b-409">409</span></td><td>Otra petición con la misma clave está en curso. Cuerpo <code>ProblemDetail</code>.</td></tr>
+        <tr><td><span class="badge b-400">400</span></td><td>Falta la cabecera <code>Idempotency-Key</code> o el cuerpo no pasa la validación.</td></tr>
+      </table></div>
+<pre><code>// 201
+{ "transactionId": "1b4e…", "accountId": "ACC-001", "amount": 99.95,
+  "currency": "EUR", "status": "APPROVED", "processedAt": "2026-11-10T09:12:44Z" }
+
+// 409 (application/problem+json)
+{ "type": "https://example.com/errors/duplicate-in-flight", "title": "Conflict", "status": 409,
+  "detail": "A request with this idempotency key is already being processed",
+  "instance": "/payments", "idempotencyKey": "6f1c9e2a-…" }</code></pre>
+      <p>Actuator expone además <code>/actuator/health</code> (con detalles), <code>/actuator/info</code> y <code>/actuator/metrics</code>.</p>
+    </section>
+
+    <section id="config">
+      <h2>8. Configuración</h2>
+      <p class="file">src/main/resources/application.yml</p>
+      <div class="table-wrap"><table>
+        <tr><th>Ámbito</th><th>Valores relevantes</th></tr>
+        <tr><td>Datasource</td><td>PostgreSQL en <code>192.168.1.10:5432/idempotency</code>, pool Hikari de 10 conexiones.</td></tr>
+        <tr><td>JPA</td><td><code>ddl-auto: validate</code>, dialecto PostgreSQL.</td></tr>
+        <tr><td>Redis</td><td><code>localhost:6379</code>, timeout 2 s, pool Lettuce (8 activas / 4 inactivas).</td></tr>
+        <tr><td>Flyway</td><td>Habilitado, <code>classpath:db/migration</code>.</td></tr>
+        <tr><td>Logging</td><td><code>DEBUG</code> para <code>com.vivaldispring.idempotency</code>.</td></tr>
+      </table></div>
+    </section>
+
+    <section id="tests">
+      <h2>9. Tests</h2>
+      <p>La batería cubre cada capa por separado y luego el sistema completo con contenedores reales.</p>
+      <div class="table-wrap"><table>
+        <tr><th>Clase</th><th>Tipo</th><th>Qué verifica</th></tr>
+        <tr><td><code>IdempotencyHotPathServiceTest</code></td><td>Unitario (Mockito)</td><td>Lock adquirido / duplicado → excepción, TTL de 30 s, valor <code>IN_FLIGHT</code>, <code>null</code> de Redis tratado como fallo, liberación idempotente, introspección.</td></tr>
+        <tr><td><code>IdempotencyColdPathServiceTest</code></td><td>Unitario (Mockito)</td><td><code>checkCompleted</code> solo acepta <code>COMPLETED</code>; <code>createProcessingRecord</code> reutiliza registros; <code>markCompleted</code> / <code>markFailed</code>.</td></tr>
+        <tr><td><code>IdempotencyRecordRepositoryTest</code></td><td><code>@DataJpaTest</code> + PostgreSQL real</td><td>Ida y vuelta de guardado, <code>UPDATE</code> de <code>markCompleted</code>, consultas derivadas, restricción <code>UNIQUE</code>.</td></tr>
+        <tr><td><code>PaymentIdempotencyIntegrationTest</code></td><td><code>@SpringBootTest</code> + PostgreSQL + Redis reales</td><td>Happy path, replay con mismo <code>transactionId</code> y cabecera, que el replay no crea filas nuevas, concurrencia (2 y 5 hilos: solo uno obtiene 201), cuerpo <code>ProblemDetail</code> del 409, errores 400, claves independientes.</td></tr>
+      </table></div>
+      <p><code>ContainersBase</code> arranca un único <code>postgres:16-alpine</code> y un <code>redis:7-alpine</code> estáticos compartidos entre clases y sobrescribe las propiedades de conexión con <code>@DynamicPropertySource</code>. JaCoCo genera el informe de cobertura en la fase <code>test</code>.</p>
+    </section>
+
+    <section id="ejecutar">
+      <h2>10. Ejecutar</h2>
+<pre><code># Tests (requiere Docker para Testcontainers)
+./mvnw test        # o: mvn test
+# Informe de cobertura: target/site/jacoco/index.html
+
+# Arrancar la aplicación (requiere PostgreSQL y Redis accesibles según application.yml)
+mvn spring-boot:run
+
+# Probar la idempotencia
+KEY=$(uuidgen)
+curl -i -X POST localhost:8080/payments \
+  -H "Content-Type: application/json" -H "Idempotency-Key: $KEY" \
+  -d '{"accountId":"ACC-001","amount":10,"currency":"EUR"}'
+# Repite el mismo comando: misma transactionId + "Idempotency-Replayed: true"</code></pre>
+    </section>
+
+    <section id="observaciones">
+      <h2>11. Observaciones y posibles mejoras</h2>
+      <p>Puntos detectados al revisar el código, útiles si el proyecto evoluciona más allá de demo:</p>
+      <div class="callout warn">
+        <strong>Flyway sin dependencia</strong>
+        El <code>pom.xml</code> no incluye <code>spring-boot-starter-flyway</code> (ni <code>flyway-core</code> / <code>flyway-database-postgresql</code>). En Spring Boot 4 la autoconfiguración de Flyway es un módulo aparte, así que las propiedades <code>spring.flyway.*</code> no tienen efecto y la tabla debe existir previamente para que pase <code>ddl-auto: validate</code>.
+      </div>
+      <ul>
+        <li><strong>Expiración del lock durante el proceso.</strong> Si <code>PaymentService</code> tarda más de 30 s, el lock caduca y otra petición con la misma clave podría ejecutarse en paralelo (encontraría un registro <code>PROCESSING</code>, que no bloquea). Se podría tratar <code>PROCESSING</code> como 409 en el cold-path, o renovar el TTL.</li>
+        <li><strong>Liberación del lock sin comprobar propietario.</strong> <code>releaseLock</code> hace <code>DEL</code> sin verificar que el lock sigue siendo suyo; tras una expiración podría borrar el lock de otra petición. Lo habitual es guardar un token único y borrar con un script Lua <em>compare-and-delete</em>.</li>
+        <li><strong>No se compara el payload.</strong> Una misma clave con un cuerpo distinto devuelve la respuesta original. Guardar un hash del request y responder 422 si no coincide es una práctica común.</li>
+        <li><strong>Sin espacio de nombres en Redis.</strong> La clave del lock es directamente el <code>Idempotency-Key</code>; un prefijo (<code>idem:payments:</code>) evita colisiones con otros usos de Redis.</li>
+        <li><strong>Sin limpieza de registros.</strong> Los registros de PostgreSQL no caducan; normalmente se purgan tras 24 h–7 días.</li>
+        <li><strong>Índice redundante.</strong> La restricción <code>UNIQUE</code> ya crea un índice, por lo que <code>idx_idempotency_key</code> lo duplica.</li>
+        <li><strong>Transacciones separadas.</strong> <code>createProcessingRecord</code>, la lógica de negocio y <code>markCompleted</code> ocurren en transacciones distintas; si el proceso muere entre medias, el registro queda en <code>PROCESSING</code>. Con un pago real conviene que el resultado de negocio y el <code>COMPLETED</code> se confirmen juntos (o usar un patrón outbox).</li>
+      </ul>
+    </section>
+
+    <footer>Documentación generada a partir del código del repositorio <code>idempotency-demo</code> (Spring Boot 4.1.2, Java 21).</footer>
+  </main>
+</div>
+</body>
+</html>
