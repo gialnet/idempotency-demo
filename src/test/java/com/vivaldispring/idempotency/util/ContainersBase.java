@@ -36,6 +36,7 @@ public abstract class ContainersBase {
         registry.add("spring.datasource.password",      POSTGRES::getPassword);
         registry.add("spring.data.redis.host",          REDIS::getHost);
         registry.add("spring.data.redis.port",          () -> REDIS.getMappedPort(6379));
+        registry.add("spring.data.redis.password",      () -> "");
         registry.add("spring.flyway.enabled",           () -> "true");
         registry.add("spring.jpa.hibernate.ddl-auto",   () -> "validate");
     }

@@ -21,13 +21,14 @@ spring:
 
   data:
     redis:
-      host: localhost
+      host: 192.168.1.15
       port: 6379
       timeout: 2000ms
       lettuce:
         pool:
           max-active: 8
           max-idle: 4
+      password: zs8xhOG0AgB6f9Fzc0ikDCSxUjrRkNyo
 
   flyway:
     enabled: true
