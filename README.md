@@ -1,56 +1,56 @@
 # idempotency-demo
 
-Una API de pagos en Spring Boot 4.1 que garantiza que una misma operación no se ejecuta dos veces, combinando un **lock en Redis** (hot-path) con un **registro persistente en PostgreSQL** (cold-path).
+A Spring Boot 4.1 payments API that guarantees the same operation is never executed twice, combining a **Redis lock** (hot-path) with a **persistent record in PostgreSQL** (cold-path).
 
 `Java 21` · `Spring Boot 4.1.2` · `Spring Data JPA` · `Spring Data Redis (Lettuce)` · `PostgreSQL` · `Flyway` · `Testcontainers 2.0` · `Lombok`
 
-> Versión HTML de esta documentación, con diagramas: [`docs/index.html`](docs/index.html)
+> HTML version of this documentation, with diagrams: [English](docs/index.en.html) · [Español](docs/index.html)
 
-## Contenido
+## Contents
 
-1. [Resumen](#1-resumen)
-2. [Arquitectura: hot-path y cold-path](#2-arquitectura-hot-path-y-cold-path)
-3. [Flujo de una petición](#3-flujo-de-una-petición)
-4. [Estructura del proyecto](#4-estructura-del-proyecto)
-5. [Componentes](#5-componentes)
-6. [Modelo de datos](#6-modelo-de-datos)
-7. [API HTTP](#7-api-http)
-8. [Configuración](#8-configuración)
+1. [Overview](#1-overview)
+2. [Architecture: hot-path and cold-path](#2-architecture-hot-path-and-cold-path)
+3. [Request flow](#3-request-flow)
+4. [Project structure](#4-project-structure)
+5. [Components](#5-components)
+6. [Data model](#6-data-model)
+7. [HTTP API](#7-http-api)
+8. [Configuration](#8-configuration)
 9. [Tests](#9-tests)
-10. [Ejecutar](#10-ejecutar)
-11. [Observaciones y posibles mejoras](#11-observaciones-y-posibles-mejoras)
+10. [Running](#10-running)
+11. [Notes and possible improvements](#11-notes-and-possible-improvements)
 
-## 1. Resumen
+## 1. Overview
 
-En sistemas distribuidos un cliente puede reenviar una petición (timeout de red, reintento automático, doble clic). Para operaciones con efectos secundarios, como un cobro, eso produciría *dos* pagos. El patrón **Idempotency-Key** lo evita: el cliente envía una clave única por operación en la cabecera `Idempotency-Key`, y el servidor garantiza que:
+In distributed systems a client may resend a request (network timeout, automatic retry, double click). For operations with side effects, such as a charge, that would produce *two* payments. The **Idempotency-Key** pattern prevents this: the client sends a unique key per operation in the `Idempotency-Key` header, and the server guarantees that:
 
-- Si llegan **dos peticiones a la vez** con la misma clave, solo una se procesa; la otra recibe `409 Conflict`.
-- Si llega **un reintento después** de que la primera terminó, se devuelve la respuesta original guardada, sin volver a ejecutar la lógica de negocio, con la cabecera `Idempotency-Replayed: true`.
+- If **two requests arrive at the same time** with the same key, only one is processed; the other gets `409 Conflict`.
+- If **a retry arrives later**, after the first one has finished, the stored original response is returned without running the business logic again, with the header `Idempotency-Replayed: true`.
 
-Esto se implementa con un mecanismo *check-and-set* de dos niveles, que da nombre a los servicios del proyecto.
+This is implemented with a two-level *check-and-set* mechanism, which gives the project's services their names.
 
-## 2. Arquitectura: hot-path y cold-path
+## 2. Architecture: hot-path and cold-path
 
 | Hot-path · Redis (`IdempotencyHotPathService`) | Cold-path · PostgreSQL (`IdempotencyColdPathService`) |
 |---|---|
-| Protege contra **duplicados concurrentes**. Usa el comando atómico `SET key IN_FLIGHT NX EX 30`: solo el primer hilo/nodo que llega consigue crear la clave. El lock es temporal (TTL de 30 s) y se borra al terminar la petición. | Protege contra **reintentos posteriores**. Guarda de forma duradera el estado de cada clave (`PROCESSING` → `COMPLETED` / `FAILED`) junto con el código HTTP y el cuerpo JSON de la respuesta original, para poder repetirla. |
+| Protects against **concurrent duplicates**. Uses the atomic command `SET key IN_FLIGHT NX EX 30`: only the first thread/node to arrive manages to create the key. The lock is temporary (30 s TTL) and is deleted when the request finishes. | Protects against **later retries**. Durably stores the state of each key (`PROCESSING` → `COMPLETED` / `FAILED`) together with the HTTP status code and the JSON body of the original response, so it can be replayed. |
 
-> **¿Por qué dos almacenes?**
-> Redis es rápido y su `SET NX` es atómico, ideal para un lock distribuido de corta vida, pero no es la fuente de verdad duradera. PostgreSQL es duradero y transaccional, ideal para guardar el resultado final, pero sería más lento y complejo usarlo como lock bajo alta concurrencia. Cada uno cubre la debilidad del otro.
+> **Why two stores?**
+> Redis is fast and its `SET NX` is atomic, ideal for a short-lived distributed lock, but it is not the durable source of truth. PostgreSQL is durable and transactional, ideal for storing the final result, but using it as a lock under high concurrency would be slower and more complex. Each one covers the other's weakness.
 
-## 3. Flujo de una petición
+## 3. Request flow
 
-Todo el ciclo está orquestado en `PaymentController.createPayment()`:
+The whole cycle is orchestrated in `PaymentController.createPayment()`:
 
-1. **Adquirir lock (hot-path).** `hotPath.tryAcquireLock(key)`. Si la clave ya existe en Redis, lanza `DuplicateInFlightException`, que se traduce en `409`. Esto ocurre *antes* del bloque `try`, así que el lock de otra petición nunca se libera por error.
-2. **Comprobar si ya se completó (cold-path).** `coldPath.checkCompleted(key)` busca un registro con estado `COMPLETED`. Si existe, deserializa el `responseBody` guardado y lo devuelve con el código original y la cabecera `Idempotency-Replayed: true`.
-3. **Ejecutar.** Crea (o reutiliza) un registro `PROCESSING` y llama a `paymentService.process(request)`.
-4. **Persistir.** Serializa la respuesta a JSON y llama a `coldPath.markCompleted(key, 201, body)`. Devuelve `201 Created`.
-5. **Liberar lock.** En el `finally`, `hotPath.releaseLock(key)` borra la clave de Redis, tanto si hubo éxito como error. Si hubo una excepción, antes se marca el registro como `FAILED` para que el cliente pueda reintentar.
+1. **Acquire the lock (hot-path).** `hotPath.tryAcquireLock(key)`. If the key already exists in Redis, it throws `DuplicateInFlightException`, which is mapped to `409`. This happens *before* the `try` block, so another request's lock is never released by mistake.
+2. **Check whether it already completed (cold-path).** `coldPath.checkCompleted(key)` looks for a record with status `COMPLETED`. If one exists, it deserializes the stored `responseBody` and returns it with the original status code and the header `Idempotency-Replayed: true`.
+3. **Execute.** Creates (or reuses) a `PROCESSING` record and calls `paymentService.process(request)`.
+4. **Persist.** Serializes the response to JSON and calls `coldPath.markCompleted(key, 201, body)`. Returns `201 Created`.
+5. **Release the lock.** In the `finally` block, `hotPath.releaseLock(key)` deletes the key from Redis, on both success and failure. If an exception occurred, the record is first marked as `FAILED` so the client can retry.
 
 ```mermaid
 sequenceDiagram
-    participant C as Cliente
+    participant C as Client
     participant PC as PaymentController
     participant R as Redis
     participant PG as PostgreSQL
@@ -58,9 +58,9 @@ sequenceDiagram
 
     C->>PC: POST /payments + Idempotency-Key
     PC->>R: ① SET key IN_FLIGHT NX EX 30
-    R-->>PC: OK (o null → 409)
-    PC->>PG: ② findByIdempotencyKey (¿COMPLETED?)
-    PG-->>PC: vacío → continuar · COMPLETED → replay
+    R-->>PC: OK (or null → 409)
+    PC->>PG: ② findByIdempotencyKey (COMPLETED?)
+    PG-->>PC: empty → continue · COMPLETED → replay
     PC->>PG: ③ INSERT status=PROCESSING
     PC->>PS: ③ process(request)
     PS-->>PC: PaymentResponse (APPROVED)
@@ -68,66 +68,66 @@ sequenceDiagram
     PC->>R: ⑤ DEL key (finally)
     PC-->>C: 201 Created + JSON
 
-    Note over C,PS: Reintento posterior con la misma clave: ① lock OK (el anterior ya se liberó) → ② encuentra COMPLETED →<br/>devuelve el cuerpo guardado con Idempotency-Replayed: true. PaymentService NO se vuelve a llamar. → ⑤ DEL key
+    Note over C,PS: Later retry with the same key: ① lock OK (the previous one was released) → ② finds COMPLETED →<br/>returns the stored body with Idempotency-Replayed: true. PaymentService is NOT called again. → ⑤ DEL key
 ```
 
-### Ciclo de vida del registro en PostgreSQL
+### Lifecycle of the PostgreSQL record
 
 ```mermaid
 stateDiagram-v2
     direction LR
     [*] --> PROCESSING: createProcessingRecord
-    PROCESSING --> COMPLETED: markCompleted (éxito)
-    PROCESSING --> FAILED: markFailed (excepción)
-    note right of COMPLETED: se repite la respuesta
-    note right of FAILED: el cliente puede reintentar
+    PROCESSING --> COMPLETED: markCompleted (success)
+    PROCESSING --> FAILED: markFailed (exception)
+    note right of COMPLETED: response is replayed
+    note right of FAILED: client may retry
 ```
 
-Solo un registro `COMPLETED` provoca un replay; `PROCESSING` y `FAILED` dejan pasar la petición a la lógica de negocio.
+Only a `COMPLETED` record triggers a replay; `PROCESSING` and `FAILED` let the request through to the business logic.
 
-## 4. Estructura del proyecto
+## 4. Project structure
 
 ```text
 src/main/java/com/vivaldispring/idempotency/
-├── IdempotencyApplication.java          # Punto de entrada Spring Boot
+├── IdempotencyApplication.java          # Spring Boot entry point
 ├── config/
-│   ├── IdempotencyConstants.java        # Nombre de cabecera, TTL, valor del lock
-│   └── RedisConfig.java                 # Bean StringRedisTemplate
+│   ├── IdempotencyConstants.java        # Header name, TTL, lock value
+│   └── RedisConfig.java                 # StringRedisTemplate bean
 ├── controller/
-│   └── PaymentController.java           # POST /payments — orquesta el flujo
+│   └── PaymentController.java           # POST /payments — orchestrates the flow
 ├── exception/
-│   ├── DuplicateInFlightException.java  # Lock ya tomado
+│   ├── DuplicateInFlightException.java  # Lock already taken
 │   └── GlobalExceptionHandler.java      # → 409 ProblemDetail (RFC 9457)
 ├── model/
-│   ├── IdempotencyRecord.java           # Entidad JPA
+│   ├── IdempotencyRecord.java           # JPA entity
 │   ├── IdempotencyStatus.java           # PROCESSING | COMPLETED | FAILED
-│   ├── PaymentRequest.java              # record con validación
-│   └── PaymentResponse.java             # record de respuesta
+│   ├── PaymentRequest.java              # record with validation
+│   └── PaymentResponse.java             # response record
 ├── repository/
-│   └── IdempotencyRecordRepository.java # Spring Data JPA + UPDATE JPQL
+│   └── IdempotencyRecordRepository.java # Spring Data JPA + JPQL UPDATE
 └── service/
-    ├── IdempotencyHotPathService.java   # Lock Redis
-    ├── IdempotencyColdPathService.java  # Registro PostgreSQL
-    └── PaymentService.java              # Lógica de negocio (stub)
+    ├── IdempotencyHotPathService.java   # Redis lock
+    ├── IdempotencyColdPathService.java  # PostgreSQL record
+    └── PaymentService.java              # Business logic (stub)
 
 src/main/resources/
 ├── application.yml
 └── db/migration/V1__create_idempotency_records.sql
 ```
 
-## 5. Componentes
+## 5. Components
 
 ### PaymentController
 
 `controller/PaymentController.java`
 
-Único endpoint REST: `POST /payments`. Recibe la cabecera obligatoria `Idempotency-Key` y un `PaymentRequest` validado con `@Valid`. Depende de los dos servicios de idempotencia, de `PaymentService` y del `ObjectMapper` de Jackson 3 (`tools.jackson.databind`, el paquete nuevo en Spring Boot 4) para (de)serializar la respuesta guardada.
+The only REST endpoint: `POST /payments`. It takes the mandatory `Idempotency-Key` header and a `PaymentRequest` validated with `@Valid`. It depends on the two idempotency services, on `PaymentService`, and on the Jackson 3 `ObjectMapper` (`tools.jackson.databind`, the new package in Spring Boot 4) to (de)serialize the stored response.
 
 ```java
-hotPath.tryAcquireLock(idempotencyKey);          // fuera del try: si falla, no se libera nada
+hotPath.tryAcquireLock(idempotencyKey);          // outside the try: if it fails, nothing is released
 try {
     var existing = coldPath.checkCompleted(idempotencyKey);
-    if (existing.isPresent()) { /* replay con Idempotency-Replayed: true */ }
+    if (existing.isPresent()) { /* replay with Idempotency-Replayed: true */ }
     coldPath.createProcessingRecord(idempotencyKey);
     PaymentResponse result = paymentService.process(request);
     coldPath.markCompleted(idempotencyKey, 201, objectMapper.writeValueAsString(result));
@@ -144,69 +144,69 @@ try {
 
 `service/IdempotencyHotPathService.java`
 
-| Método | Qué hace |
+| Method | What it does |
 |---|---|
-| `tryAcquireLock(key)` | `opsForValue().setIfAbsent(key, "IN_FLIGHT", 30s)`. Devuelve `true` si lo consigue; si Redis devuelve `false` o `null`, registra un warning y lanza `DuplicateInFlightException`. |
-| `releaseLock(key)` | `DEL key`. Seguro aunque la clave ya no exista. |
-| `isLocked(key)` | `EXISTS key`. Pensado para tests. |
-| `getLockValue(key)` | `GET key` (devuelve `IN_FLIGHT` o `null`). Pensado para tests. |
+| `tryAcquireLock(key)` | `opsForValue().setIfAbsent(key, "IN_FLIGHT", 30s)`. Returns `true` on success; if Redis returns `false` or `null`, it logs a warning and throws `DuplicateInFlightException`. |
+| `releaseLock(key)` | `DEL key`. Safe even if the key no longer exists. |
+| `isLocked(key)` | `EXISTS key`. Intended for tests. |
+| `getLockValue(key)` | `GET key` (returns `IN_FLIGHT` or `null`). Intended for tests. |
 
-El TTL de 30 s actúa como red de seguridad: si la instancia se cae a mitad de la petición y nunca llega al `finally`, el lock expira solo y la clave no queda bloqueada para siempre.
+The 30 s TTL acts as a safety net: if the instance dies mid-request and never reaches the `finally` block, the lock expires on its own and the key is not blocked forever.
 
 ### IdempotencyColdPathService
 
 `service/IdempotencyColdPathService.java`
 
-| Método | Transacción | Qué hace |
+| Method | Transaction | What it does |
 |---|---|---|
-| `checkCompleted(key)` | read-only | Busca por clave y filtra a `status == COMPLETED`. |
-| `createProcessingRecord(key)` | sí | Si ya hay registro (p. ej. uno `FAILED` de un intento anterior) lo devuelve; si no, inserta uno nuevo en `PROCESSING` con `responseStatus = 0`. |
-| `markCompleted(key, status, body)` | sí | Ejecuta un `UPDATE` JPQL masivo: estado, cuerpo, código HTTP y `completedAt`. |
-| `markFailed(key)` | sí | Si existe el registro, lo pasa a `FAILED`. No-op si no existe. |
+| `checkCompleted(key)` | read-only | Looks up by key and filters to `status == COMPLETED`. |
+| `createProcessingRecord(key)` | yes | If a record already exists (e.g. a `FAILED` one from a previous attempt) it returns it; otherwise it inserts a new one in `PROCESSING` with `responseStatus = 0`. |
+| `markCompleted(key, status, body)` | yes | Runs a bulk JPQL `UPDATE`: status, body, HTTP code and `completedAt`. |
+| `markFailed(key)` | yes | If the record exists, sets it to `FAILED`. No-op if it does not exist. |
 
 ### PaymentService
 
 `service/PaymentService.java`
 
-Simulación de la lógica de negocio cara y con efectos secundarios (cobro en pasarela, apunte contable…). Devuelve siempre un `PaymentResponse` con un `transactionId` UUID aleatorio y estado `APPROVED`. Que el UUID sea distinto en cada ejecución es justo lo que permite a los tests comprobar que un replay devuelve la *misma* transacción y no una nueva.
+A simulation of expensive business logic with side effects (gateway charge, ledger entry…). It always returns a `PaymentResponse` with a random UUID `transactionId` and status `APPROVED`. The UUID being different on every execution is exactly what lets the tests verify that a replay returns the *same* transaction rather than a new one.
 
 ### IdempotencyRecordRepository
 
 `repository/IdempotencyRecordRepository.java`
 
-- `findByIdempotencyKey(String)` — consulta derivada.
-- `existsByIdempotencyKeyAndStatus(String, IdempotencyStatus)` — consulta derivada (actualmente solo usada en tests).
-- `markCompleted(...)` — `@Modifying @Query` con un `UPDATE` JPQL; devuelve el número de filas afectadas.
+- `findByIdempotencyKey(String)` — derived query.
+- `existsByIdempotencyKeyAndStatus(String, IdempotencyStatus)` — derived query (currently only used in tests).
+- `markCompleted(...)` — `@Modifying @Query` with a JPQL `UPDATE`; returns the number of affected rows.
 
-### Excepciones
+### Exceptions
 
 `exception/`
 
-`DuplicateInFlightException` (`RuntimeException`) lleva la clave en conflicto. `GlobalExceptionHandler` (`@RestControllerAdvice`) la convierte en un `ProblemDetail` estándar RFC 9457 con estado 409, un `type` URI y la propiedad extra `idempotencyKey`.
+`DuplicateInFlightException` (`RuntimeException`) carries the conflicting key. `GlobalExceptionHandler` (`@RestControllerAdvice`) turns it into a standard RFC 9457 `ProblemDetail` with status 409, a `type` URI and the extra property `idempotencyKey`.
 
-### Configuración
+### Configuration classes
 
 `config/`
 
-`IdempotencyConstants` centraliza `HEADER = "Idempotency-Key"`, `LOCK_TTL_SECONDS = 30` e `IN_FLIGHT_VALUE = "IN_FLIGHT"`. `RedisConfig` declara un `StringRedisTemplate` sobre la conexión Lettuce autoconfigurada.
+`IdempotencyConstants` centralizes `HEADER = "Idempotency-Key"`, `LOCK_TTL_SECONDS = 30` and `IN_FLIGHT_VALUE = "IN_FLIGHT"`. `RedisConfig` declares a `StringRedisTemplate` on top of the auto-configured Lettuce connection.
 
-## 6. Modelo de datos
+## 6. Data model
 
-Tabla `idempotency_records`, creada por la migración Flyway `V1__create_idempotency_records.sql` y mapeada por la entidad `IdempotencyRecord`. Hibernate arranca con `ddl-auto: validate`, así que la entidad debe coincidir con el esquema.
+Table `idempotency_records`, created by the Flyway migration `V1__create_idempotency_records.sql` and mapped by the `IdempotencyRecord` entity. Hibernate starts with `ddl-auto: validate`, so the entity must match the schema.
 
-| Columna | Tipo | Restricciones | Significado |
+| Column | Type | Constraints | Meaning |
 |---|---|---|---|
-| `id` | BIGSERIAL | PK | Identificador interno (`GenerationType.IDENTITY`). |
-| `idempotency_key` | VARCHAR(255) | NOT NULL, UNIQUE | Clave enviada por el cliente. |
+| `id` | BIGSERIAL | PK | Internal identifier (`GenerationType.IDENTITY`). |
+| `idempotency_key` | VARCHAR(255) | NOT NULL, UNIQUE | Key sent by the client. |
 | `status` | VARCHAR(20) | NOT NULL | `PROCESSING` / `COMPLETED` / `FAILED` (`EnumType.STRING`). |
-| `response_status` | INTEGER | NOT NULL, default 0 | Código HTTP original (0 mientras no termina). |
-| `response_body` | TEXT | | JSON de la respuesta original. |
-| `created_at` | TIMESTAMPTZ | NOT NULL | Se rellena en `@PrePersist`. |
-| `completed_at` | TIMESTAMPTZ | | Se rellena al completar. |
+| `response_status` | INTEGER | NOT NULL, default 0 | Original HTTP code (0 until finished). |
+| `response_body` | TEXT | | JSON of the original response. |
+| `created_at` | TIMESTAMPTZ | NOT NULL | Set in `@PrePersist`. |
+| `completed_at` | TIMESTAMPTZ | | Set on completion. |
 
-La restricción `UNIQUE` sobre `idempotency_key` es la última línea de defensa: aunque fallara el lock de Redis, la base de datos no permitiría dos registros con la misma clave.
+The `UNIQUE` constraint on `idempotency_key` is the last line of defense: even if the Redis lock failed, the database would not allow two records with the same key.
 
-## 7. API HTTP
+## 7. HTTP API
 
 ### `POST /payments`
 
@@ -218,14 +218,14 @@ Idempotency-Key: 6f1c9e2a-0b7d-4c55-9a1e-3f2d8b7c4e10
 { "accountId": "ACC-001", "amount": 99.95, "currency": "EUR" }
 ```
 
-Validaciones del cuerpo (`PaymentRequest`): `accountId` y `currency` `@NotBlank`; `amount` `@Positive`.
+Body validation (`PaymentRequest`): `accountId` and `currency` are `@NotBlank`; `amount` is `@Positive`.
 
-| Respuesta | Cuándo |
+| Response | When |
 |---|---|
-| `201` | Primera ejecución correcta. Cuerpo `PaymentResponse`. |
-| `201` + `Idempotency-Replayed: true` | Reintento de una clave ya `COMPLETED`: mismo cuerpo que la primera vez. |
-| `409` | Otra petición con la misma clave está en curso. Cuerpo `ProblemDetail`. |
-| `400` | Falta la cabecera `Idempotency-Key` o el cuerpo no pasa la validación. |
+| `201` | First successful execution. Body is a `PaymentResponse`. |
+| `201` + `Idempotency-Replayed: true` | Retry of a key that is already `COMPLETED`: same body as the first time. |
+| `409` | Another request with the same key is in progress. Body is a `ProblemDetail`. |
+| `400` | The `Idempotency-Key` header is missing or the body fails validation. |
 
 ```jsonc
 // 201
@@ -238,62 +238,62 @@ Validaciones del cuerpo (`PaymentRequest`): `accountId` y `currency` `@NotBlank`
   "instance": "/payments", "idempotencyKey": "6f1c9e2a-…" }
 ```
 
-Actuator expone además `/actuator/health` (con detalles), `/actuator/info` y `/actuator/metrics`.
+Actuator also exposes `/actuator/health` (with details), `/actuator/info` and `/actuator/metrics`.
 
-## 8. Configuración
+## 8. Configuration
 
 `src/main/resources/application.yml`
 
-| Ámbito | Valores relevantes |
+| Area | Relevant values |
 |---|---|
-| Datasource | PostgreSQL en `192.168.1.10:5432/idempotency`, pool Hikari de 10 conexiones. |
-| JPA | `ddl-auto: validate`, dialecto PostgreSQL. |
-| Redis | `localhost:6379`, timeout 2 s, pool Lettuce (8 activas / 4 inactivas). |
-| Flyway | Habilitado, `classpath:db/migration`. |
-| Logging | `DEBUG` para `com.vivaldispring.idempotency`. |
+| Datasource | PostgreSQL at `192.168.1.10:5432/idempotency`, Hikari pool of 10 connections. |
+| JPA | `ddl-auto: validate`, PostgreSQL dialect. |
+| Redis | `localhost:6379`, 2 s timeout, Lettuce pool (8 active / 4 idle). |
+| Flyway | Enabled, `classpath:db/migration`. |
+| Logging | `DEBUG` for `com.vivaldispring.idempotency`. |
 
 ## 9. Tests
 
-La batería cubre cada capa por separado y luego el sistema completo con contenedores reales.
+The suite covers each layer on its own and then the whole system with real containers.
 
-| Clase | Tipo | Qué verifica |
+| Class | Type | What it verifies |
 |---|---|---|
-| `IdempotencyHotPathServiceTest` | Unitario (Mockito) | Lock adquirido / duplicado → excepción, TTL de 30 s, valor `IN_FLIGHT`, `null` de Redis tratado como fallo, liberación idempotente, introspección. |
-| `IdempotencyColdPathServiceTest` | Unitario (Mockito) | `checkCompleted` solo acepta `COMPLETED`; `createProcessingRecord` reutiliza registros; `markCompleted` / `markFailed`. |
-| `IdempotencyRecordRepositoryTest` | `@DataJpaTest` + PostgreSQL real | Ida y vuelta de guardado, `UPDATE` de `markCompleted`, consultas derivadas, restricción `UNIQUE`. |
-| `PaymentIdempotencyIntegrationTest` | `@SpringBootTest` + PostgreSQL + Redis reales | Happy path, replay con mismo `transactionId` y cabecera, que el replay no crea filas nuevas, concurrencia (2 y 5 hilos: solo uno obtiene 201), cuerpo `ProblemDetail` del 409, errores 400, claves independientes. |
+| `IdempotencyHotPathServiceTest` | Unit (Mockito) | Lock acquired / duplicate → exception, 30 s TTL, `IN_FLIGHT` value, `null` from Redis treated as failure, idempotent release, introspection. |
+| `IdempotencyColdPathServiceTest` | Unit (Mockito) | `checkCompleted` only accepts `COMPLETED`; `createProcessingRecord` reuses records; `markCompleted` / `markFailed`. |
+| `IdempotencyRecordRepositoryTest` | `@DataJpaTest` + real PostgreSQL | Save round-trip, `markCompleted` `UPDATE`, derived queries, `UNIQUE` constraint. |
+| `PaymentIdempotencyIntegrationTest` | `@SpringBootTest` + real PostgreSQL + Redis | Happy path, replay with the same `transactionId` and header, replay creates no new rows, concurrency (2 and 5 threads: only one gets 201), 409 `ProblemDetail` body, 400 errors, independent keys. |
 
-`ContainersBase` arranca un único `postgres:16-alpine` y un `redis:7-alpine` estáticos compartidos entre clases y sobrescribe las propiedades de conexión con `@DynamicPropertySource`. JaCoCo genera el informe de cobertura en la fase `test`.
+`ContainersBase` starts a single static `postgres:16-alpine` and `redis:7-alpine` shared across test classes and overrides the connection properties with `@DynamicPropertySource`. JaCoCo generates the coverage report in the `test` phase.
 
-## 10. Ejecutar
+## 10. Running
 
 ```bash
-# Tests (requiere Docker para Testcontainers)
-./mvnw test        # o: mvn test
-# Informe de cobertura: target/site/jacoco/index.html
+# Tests (Docker required for Testcontainers)
+./mvnw test        # or: mvn test
+# Coverage report: target/site/jacoco/index.html
 
-# Arrancar la aplicación (requiere PostgreSQL y Redis accesibles según application.yml)
+# Start the application (PostgreSQL and Redis must be reachable as configured in application.yml)
 mvn spring-boot:run
 
-# Probar la idempotencia
+# Try out idempotency
 KEY=$(uuidgen)
 curl -i -X POST localhost:8080/payments \
   -H "Content-Type: application/json" -H "Idempotency-Key: $KEY" \
   -d '{"accountId":"ACC-001","amount":10,"currency":"EUR"}'
-# Repite el mismo comando: misma transactionId + "Idempotency-Replayed: true"
+# Run the same command again: same transactionId + "Idempotency-Replayed: true"
 ```
 
-## 11. Observaciones y posibles mejoras
+## 11. Notes and possible improvements
 
-Puntos detectados al revisar el código, útiles si el proyecto evoluciona más allá de demo:
+Issues found while reviewing the code, useful if the project grows beyond a demo:
 
 > [!WARNING]
-> **Flyway sin dependencia.** El `pom.xml` no incluye `spring-boot-starter-flyway` (ni `flyway-core` / `flyway-database-postgresql`). En Spring Boot 4 la autoconfiguración de Flyway es un módulo aparte, así que las propiedades `spring.flyway.*` no tienen efecto y la tabla debe existir previamente para que pase `ddl-auto: validate`.
+> **Flyway dependency missing.** The `pom.xml` does not include `spring-boot-starter-flyway` (nor `flyway-core` / `flyway-database-postgresql`). In Spring Boot 4, Flyway auto-configuration is a separate module, so the `spring.flyway.*` properties have no effect and the table must already exist for `ddl-auto: validate` to pass.
 
-- **Expiración del lock durante el proceso.** Si `PaymentService` tarda más de 30 s, el lock caduca y otra petición con la misma clave podría ejecutarse en paralelo (encontraría un registro `PROCESSING`, que no bloquea). Se podría tratar `PROCESSING` como 409 en el cold-path, o renovar el TTL.
-- **Liberación del lock sin comprobar propietario.** `releaseLock` hace `DEL` sin verificar que el lock sigue siendo suyo; tras una expiración podría borrar el lock de otra petición. Lo habitual es guardar un token único y borrar con un script Lua *compare-and-delete*.
-- **No se compara el payload.** Una misma clave con un cuerpo distinto devuelve la respuesta original. Guardar un hash del request y responder 422 si no coincide es una práctica común.
-- **Sin espacio de nombres en Redis.** La clave del lock es directamente el `Idempotency-Key`; un prefijo (`idem:payments:`) evita colisiones con otros usos de Redis.
-- **Sin limpieza de registros.** Los registros de PostgreSQL no caducan; normalmente se purgan tras 24 h–7 días.
-- **Índice redundante.** La restricción `UNIQUE` ya crea un índice, por lo que `idx_idempotency_key` lo duplica.
-- **Transacciones separadas.** `createProcessingRecord`, la lógica de negocio y `markCompleted` ocurren en transacciones distintas; si el proceso muere entre medias, el registro queda en `PROCESSING`. Con un pago real conviene que el resultado de negocio y el `COMPLETED` se confirmen juntos (o usar un patrón outbox).
+- **Lock expiry during processing.** If `PaymentService` takes longer than 30 s, the lock expires and another request with the same key could run in parallel (it would find a `PROCESSING` record, which does not block). `PROCESSING` could be treated as 409 in the cold-path, or the TTL could be renewed.
+- **Lock released without checking ownership.** `releaseLock` runs `DEL` without verifying the lock still belongs to it; after an expiry it could delete another request's lock. The usual approach is to store a unique token and delete with a *compare-and-delete* Lua script.
+- **Payload is not compared.** The same key with a different body returns the original response. Storing a hash of the request and responding 422 on mismatch is common practice.
+- **No Redis namespace.** The lock key is the raw `Idempotency-Key`; a prefix (`idem:payments:`) avoids collisions with other uses of Redis.
+- **No record cleanup.** PostgreSQL records never expire; they are usually purged after 24 h–7 days.
+- **Redundant index.** The `UNIQUE` constraint already creates an index, so `idx_idempotency_key` duplicates it.
+- **Separate transactions.** `createProcessingRecord`, the business logic and `markCompleted` run in different transactions; if the process dies in between, the record stays in `PROCESSING`. For a real payment, the business result and `COMPLETED` should be committed together (or use an outbox pattern).
